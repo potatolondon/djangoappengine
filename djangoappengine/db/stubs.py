@@ -6,6 +6,7 @@ from urllib2 import HTTPError, URLError
 from ..boot import PROJECT_DIR
 from ..utils import appid, have_appserver
 
+appid = appid()
 
 REMOTE_API_SCRIPTS = (
     '$PYTHON_LIB/google/appengine/ext/remote_api/handler.py',
