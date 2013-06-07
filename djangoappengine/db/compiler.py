@@ -24,6 +24,7 @@ from djangotoolbox.db.basecompiler import (
 from .db_settings import get_model_indexes
 from .expressions import ExpressionEvaluator
 from .utils import commit_locked
+from ..fields import AncestorKey
 
 
 # Valid query types (a dictionary is used for speedy lookups).
@@ -85,6 +86,7 @@ class GAEQuery(NonrelQuery):
         super(GAEQuery, self).__init__(compiler, fields)
         self.inequality_field = None
         self.included_pks = None
+        self.ancestor_key = None
         self.excluded_pks = ()
         self.has_negated_exact_filter = False
         self.ordering = []
@@ -139,6 +141,7 @@ class GAEQuery(NonrelQuery):
                 key = entity.key()
             if key in self.excluded_pks:
                 continue
+
             yield self._make_entity(entity)
 
     @safe_call
@@ -177,6 +180,14 @@ class GAEQuery(NonrelQuery):
                 direction = Query.ASCENDING if ascending else Query.DESCENDING
                 self.ordering.append((column, direction))
 
+    def _decode_child(self, child):
+        #HACKY: If this is an ancestor lookup, then just special case
+        #to return the ID, a special ancestor lookup, and the ancestor instance
+        constraint, lookup_type, annotation, value = child
+        if constraint.col == '__ancestor':
+            return ('id', 'ancestor', value)
+
+        return super(GAEQuery, self)._decode_child(child)
 
     @safe_call
     def add_filter(self, field, lookup_type, negated, value):
@@ -184,6 +195,10 @@ class GAEQuery(NonrelQuery):
         This function is used by the default add_filters()
         implementation.
         """
+        if lookup_type == 'ancestor':
+            self.ancestor_key = Key.from_path(value._meta.db_table, value.pk)
+            return
+
         if lookup_type not in OPERATORS_MAP:
             raise DatabaseError("Lookup type %r isn't supported." %
                                 lookup_type)
@@ -318,6 +333,11 @@ class GAEQuery(NonrelQuery):
     def _build_query(self):
         for query in self.gae_query:
             query.Order(*self.ordering)
+
+            #This is an ancestor query
+            if self.ancestor_key:
+                query.Ancestor(self.ancestor_key)
+
         if len(self.gae_query) > 1:
             return MultiQuery(self.gae_query, self.ordering)
         return self.gae_query[0]
@@ -392,6 +412,7 @@ class SQLInsertCompiler(NonrelInsertCompiler, SQLCompiler):
                           for name in unindexed_fields]
 
         entity_list = []
+        ancestor_keys = []
         for data in data_list:
             properties = {}
             kwds = {'unindexed_properties': unindexed_cols}
@@ -401,8 +422,11 @@ class SQLInsertCompiler(NonrelInsertCompiler, SQLCompiler):
                 # automatically create a new key if neither is given.
                 if column == opts.pk.column:
                     if value is not None:
+                        if isinstance(value, AncestorKey):
+                            ancestor_keys.append(value)
                         kwds['id'] = value.id()
                         kwds['name'] = value.name()
+                        kwds['parent'] = value.parent()
 
                 # GAE does not store empty lists (and even does not allow
                 # passing empty lists to Entity.update) so skip them.
@@ -418,6 +442,10 @@ class SQLInsertCompiler(NonrelInsertCompiler, SQLCompiler):
             entity_list.append(entity)
 
         keys = Put(entity_list)
+        if ancestor_keys and len(ancestor_keys) == len(keys):
+            for ancestor_key, key in zip(ancestor_keys, keys):
+                ancestor_key.key_id = key.id_or_name()
+
         return keys[0] if isinstance(keys, list) else keys
 
 

@@ -27,6 +27,7 @@ from ..boot import DATA_ROOT
 from ..utils import appid, on_production_server
 from .creation import DatabaseCreation
 from .stubs import stub_manager
+from ..fields import AncestorKey
 
 
 DATASTORE_PATHS = {
@@ -155,7 +156,8 @@ class DatabaseOperations(NonrelDatabaseOperations):
         if db_type == 'key':
 #            value = self._value_for_db_key(value, field_kind)
             try:
-                value = key_from_path(field.model._meta.db_table, value)
+                if not isinstance(value, (Key, AncestorKey)):
+                    value = key_from_path(field.model._meta.db_table, value)
             except (BadArgumentError, BadValueError,):
                 raise DatabaseError("Only strings and positive integers "
                                     "may be used as keys on GAE.")
@@ -194,9 +196,16 @@ class DatabaseOperations(NonrelDatabaseOperations):
             assert isinstance(value, Key), \
                 "GAE db.Key expected! Try changing to old storage, " \
                 "dumping data, changing to new storage and reloading."
-            assert value.parent() is None, "Parents are not yet supported!"
-            value = value.id_or_name()
-#            value = self._value_from_db_key(value, field_kind)
+            #assert value.parent() is None, "Parents are not yet supported!"
+            if value.parent():
+                from djangoappengine.fields import AncestorKey
+                value = AncestorKey(
+                    ancestor_model=field.ancestor_model,
+                    ancestor_pk=value.parent().id_or_name(),
+                    key_id=value.id_or_name()
+                )
+            else:
+                value = value.id_or_name()
 
         # Always retrieve strings as unicode (old datasets may
         # contain non-unicode strings).

@@ -7,3 +7,4 @@ from .mapreduce_input_readers import DjangoModelInputReaderTest, DjangoModelIter
 from .not_return_sets import NonReturnSetsTest
 from .order import OrderTest
 from .transactions import TransactionTest
+from .ancestor import AncestorQueryTest
